@@ -116,23 +116,28 @@ The shipped files decode a **generic Cineon-style log** (black at code 0.075,
 for consumer and prosumer flat/log profiles, and it is what you want if you
 are not sure what your camera records.
 
-If you know your camera's log, rebuild for it — the correction is identical,
-only the decode and the gamut matrix change:
+If you know your camera's log, **use the matched set instead** — they are
+built and shipped under `luts/<log>/`, same three strengths in each. The
+correction is identical; only the decode and the gamut matrix change:
+
+| `--log` | Folder | Decode | Primaries |
+| --- | --- | --- | --- |
+| `generic` (default) | `luts/` | Cineon-style log | Rec.709 |
+| `slog3` | `luts/slog3/` | Sony S-Log3 | S-Gamut3.Cine |
+| `logc3` | `luts/logc3/` | ARRI LogC3, EI 800 | ARRI Wide Gamut 3 |
+| `dlog` | `luts/dlog/` | DJI D-Log | D-Gamut |
+| `protune` | `luts/protune/` | GoPro Protune Flat | Rec.709 |
+
+This matters more than it looks. At code value 1.0 the generic curve assumes
++5.84 stops over mid grey, but S-Log3 holds +7.74 there, LogC3 +8.26, D-Log
++7.87 — and GoPro Protune only +2.47. Feeding Protune footage to the generic
+LUT renders it several stops too bright and slams the top end into white.
+
+To rebuild any of them:
 
 ```sh
-python3 tools/generate_luts.py --log slog3    --outdir luts/slog3
-python3 tools/generate_luts.py --log logc3    --outdir luts/logc3
-python3 tools/generate_luts.py --log dlog     --outdir luts/dlog
-python3 tools/generate_luts.py --log protune  --outdir luts/protune
+python3 tools/generate_luts.py --log slog3 --outdir luts/slog3
 ```
-
-| `--log` | Decode | Primaries |
-| --- | --- | --- |
-| `generic` (default) | Cineon-style log | Rec.709 |
-| `slog3` | Sony S-Log3 | S-Gamut3.Cine |
-| `logc3` | ARRI LogC3, EI 800 | ARRI Wide Gamut 3 |
-| `dlog` | DJI D-Log | D-Gamut |
-| `protune` | GoPro Protune Flat | Rec.709 |
 
 Gamut matrices are derived from published primaries at run time, not
 hard-coded. `--size` changes the cube resolution (33 by default).
@@ -159,6 +164,32 @@ Grey patches come back within 2/255 of neutral on all three. The residual sits
 on saturated reds, which is where deep water destroys the most information and
 where the warm saturation lift is deliberately generous. It also writes
 `docs/colorchecker.svg`, a contact sheet of recorded / corrected / reference.
+
+## If the LUT does not look like it should
+
+`docs/test_wedge_log.png` is a neutral log ramp and step wedge.
+`docs/test_wedge_light.png`, `_medium.png` and `_strong.png` are exactly what
+each LUT turns it into, produced by pushing the wedge through the shipped
+`.cube` file itself.
+
+Drop the wedge on a timeline, apply the LUT, and compare against the matching
+expected image. They should be indistinguishable. If they are not, the LUT is
+not reaching your footage the way you think it is — a cached copy of an older
+version, the wrong slot in the pipeline, or a colour management step sitting
+in between. Two notes: sample the wedge, not the expected image, and be aware
+that some applications colour-manage an incoming PNG, which shifts the input
+before the LUT ever sees it.
+
+The same thing as numbers, for checking with a colour picker. Neutral 8-bit in,
+Medium profile out:
+
+| in | 0 | 34 | 68 | 102 | 136 | 170 | 204 | 238 | 255 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| R | 0 | 26 | 81 | 128 | 170 | 208 | 239 | 254 | 255 |
+| G | 0 | 7 | 37 | 85 | 129 | 170 | 209 | 246 | 254 |
+| B | 0 | 3 | 20 | 69 | 116 | 158 | 198 | 242 | 254 |
+
+Regenerate all of it with `python3 tools/make_test_wedge.py`.
 
 ## Limitations
 
