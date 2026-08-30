@@ -247,10 +247,10 @@ def white_balance_gains(cast):
 
 
 GREY_OUT = 0.42          # output code for 0.18 scene grey
-MIDTONE_SLOPE = 0.125    # output code gained per stop through the midtones
+MIDTONE_SLOPE = 0.110    # output code gained per stop through the midtones
 TOE_POWER = 0.60         # < 1 keeps deep shadows separated instead of crushed
 SHOULDER_STOPS = 3.5     # stops over grey where the highlight roll-off starts
-WHITE_STOPS = 5.6        # stops over grey that reach full white
+WHITE_STOPS = 6.4        # stops over grey that reach full white
 OUTPUT_GAMMA = 2.4       # BT.1886 display the curve is built to be seen on
 
 # Toe joins the straight portion where the straight line would otherwise start
@@ -263,8 +263,16 @@ _SHOULDER_Y = GREY_OUT + MIDTONE_SLOPE * _SHOULDER_E
 
 # The shoulder is a cubic Hermite landing on white with zero slope. It only
 # decelerates the whole way - rather than speeding up first and then braking -
-# when its entry slope is at least 1.5x its average slope.
-assert MIDTONE_SLOPE * (WHITE_STOPS - _SHOULDER_E) >= 1.5 * (1.0 - _SHOULDER_Y)
+# when its entry slope is at least 1.5x its average slope. Lowering
+# MIDTONE_SLOPE tightens this, so check it rather than let the curve go wrong
+# quietly.
+_WHITE_MIN = _SHOULDER_E + 1.5 * (1.0 - _SHOULDER_Y) / MIDTONE_SLOPE
+if WHITE_STOPS < _WHITE_MIN:
+    raise ValueError(
+        f"WHITE_STOPS is {WHITE_STOPS}, but a shoulder starting at "
+        f"{_SHOULDER_E} stops with a midtone slope of {MIDTONE_SLOPE} needs at "
+        f"least {_WHITE_MIN:.2f} to roll off smoothly. Raise WHITE_STOPS, or "
+        f"start the shoulder later with SHOULDER_STOPS.")
 
 
 def display_curve(x):
@@ -350,6 +358,7 @@ BLUE_TARGET = 215.0
 SAT_SHADOW_KNEE = 0.22   # output code below which hue-selective work fades out
 SAT_KNEE = 0.80          # saturation above this rolls off instead of clipping
 SAT_CEILING = (0.75, 1.00)   # boosts fade out across this saturation range
+WHITE_KNEE = (0.85, 1.00)    # near-white output is pulled the rest of the way
 
 
 def soft_saturation(s, knee=SAT_KNEE):
@@ -409,6 +418,15 @@ def apply_profile(code, profile: Profile, decode, cam_to_709):
     h = h + np.clip(BLUE_TARGET - h, -profile.hue_pull, profile.hue_pull) * cw * vw
     sat = limit_boost(sat, s)
     out = hsv_to_rgb(h, soft_saturation(np.maximum(s * sat, 0.0)), v)
+
+    # 6. blown highlights go white. The white balance holds blue back by about
+    #    half a stop, so a clipped white would otherwise land warm - it runs
+    #    out of log before the shoulder reaches the top. Gate on the *dimmest*
+    #    channel so this only ever touches colours that are already near white,
+    #    and leaves a saturated highlight with one clipped channel alone.
+    top = np.max(out, axis=-1, keepdims=True)
+    k = smoothstep(WHITE_KNEE[0], WHITE_KNEE[1], np.min(out, axis=-1, keepdims=True))
+    out = out + (top - out) * k
 
     return np.clip(out, 0.0, 1.0)
 

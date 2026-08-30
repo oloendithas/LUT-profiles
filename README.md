@@ -60,7 +60,7 @@ Per pixel, in order:
    toward unity in deep shadow, on a perceptual ramp, so red noise is not
    amplified along with red signal.
 4. **Display rendering** — a curve that is straight in log exposure through
-   the midtones at 0.125 code per stop, with a power-law toe and a cubic
+   the midtones at 0.110 code per stop, with a power-law toe and a cubic
    shoulder that lands on white with zero slope. See *Tonal range* below.
 5. **Contrast** — a gentle endpoint-preserving S-curve pivoted on mid grey,
    putting back some of the contrast the scattering veil took out.
@@ -68,36 +68,46 @@ Per pixel, in order:
    cyan pulled toward blue and eased down so the water reads as water instead
    of neon turquoise. Both fade out in the shadows and as a colour approaches
    full saturation, where pushing further only breaks gradients.
+7. **Near-white neutralising** — the white balance holds blue back by about
+   half a stop, so a clipped white would otherwise land warm. Colours whose
+   *dimmest* channel is already near the top are pulled the rest of the way to
+   white; a saturated highlight with one clipped channel is left alone.
 
 Every stage is monotonic and smooth, so gradients through the LUT stay clean.
 
 ## Tonal range
 
-The display rendering is deliberately relaxed. It holds a constant 0.125 code
-values per stop from about one stop under mid grey up to +3.5, so midtones map
-evenly instead of being thrown at the ends of the range, and only then rolls
-off — a power-law toe below, and a shoulder that decelerates all the way to
-white at +5.6 stops.
+The display rendering is deliberately relaxed. It holds a constant 0.110 code
+values per stop from about a stop and a half under mid grey up to +3.5, so
+midtones map evenly instead of being thrown at the ends of the range, and only
+then rolls off — a power-law toe below, and a shoulder that decelerates all the
+way to white at +6.4 stops.
 
 For reference, a plain gamma 2.4 encode gives 0.144 code per stop at mid grey,
-so these profiles sit slightly gentler than that, with far more room at both
+so these profiles are noticeably gentler than that, with far more room at both
 ends. Mid grey lands on code 0.420.
 
 | stops from grey | −6 | −4 | −2 | 0 | +2 | +3 | +4 | +5 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| output code | 0.033 | 0.077 | 0.184 | 0.420 | 0.683 | 0.809 | 0.923 | 0.989 |
+| output code | 0.035 | 0.082 | 0.197 | 0.420 | 0.652 | 0.764 | 0.870 | 0.952 |
 
-Highlights keep 0.126 and 0.114 code per stop of separation at +3 and +4, so a
+Highlights keep 0.112 and 0.106 code per stop of separation at +3 and +4, so a
 bright sand patch or a sunlit surface stays readable rather than fusing into
-white, and shadows at −4 and −6 stops sit at 0.077 and 0.033 rather than
+white, and shadows at −4 and −6 stops sit at 0.082 and 0.035 rather than
 collapsing into black.
 
 If you want a different amount of punch, the four constants that shape the
 curve — `MIDTONE_SLOPE`, `TOE_POWER`, `SHOULDER_STOPS`, `WHITE_STOPS` — are at
 the top of `tools/generate_luts.py`, and each profile carries its own
-`contrast` value. Raising `MIDTONE_SLOPE` toward 0.15 gives a punchier,
-more contrasted render; lowering it toward 0.11 gives a flatter one with even
-more latitude to grade into.
+`contrast` value. Raising `MIDTONE_SLOPE` toward 0.14 gives a punchier, more
+contrasted render; lowering it toward 0.09 gives a flatter one with even more
+latitude to grade into.
+
+The shoulder only rolls off smoothly while its entry slope stays at least 1.5×
+its average slope, which lowering `MIDTONE_SLOPE` tightens. The generator
+checks this on import and, if you cross the line, tells you the minimum
+`WHITE_STOPS` to use rather than quietly producing a curve that speeds up
+before it brakes.
 
 ## Which log?
 
