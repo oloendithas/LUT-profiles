@@ -103,8 +103,7 @@ def apply_cube(rgb, table, size, dmin, dmax):
 
 def render_reference(scene_lin, profile):
     """The chart with no water in front of it, same display rendering."""
-    disp = gen.aces_tonemap(scene_lin * profile.exposure * gen.TONEMAP_EXPOSURE)
-    out = np.clip(disp, 0.0, 1.0) ** (1.0 / gen.OUTPUT_GAMMA)
+    out = gen.display_curve(scene_lin * profile.exposure)
     return np.clip(gen.contrast_curve(out, profile.contrast), 0.0, 1.0)
 
 

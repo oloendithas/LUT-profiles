@@ -59,16 +59,45 @@ Per pixel, in order:
    profile is built for, holding the luminance of a mid grey. The gains fade
    toward unity in deep shadow, on a perceptual ramp, so red noise is not
    amplified along with red signal.
-4. **Display rendering** — a filmic tone map (ACES fit, exposed so 0.18 scene
-   grey lands at code 0.419), then the gamma 2.4 encode.
-5. **Contrast** — an endpoint-preserving S-curve pivoted on mid grey, putting
-   back the contrast the scattering veil took out.
+4. **Display rendering** — a curve that is straight in log exposure through
+   the midtones at 0.125 code per stop, with a power-law toe and a cubic
+   shoulder that lands on white with zero slope. See *Tonal range* below.
+5. **Contrast** — a gentle endpoint-preserving S-curve pivoted on mid grey,
+   putting back some of the contrast the scattering veil took out.
 6. **Hue-targeted saturation** — reds, oranges and yellows lifted; leftover
    cyan pulled toward blue and eased down so the water reads as water instead
    of neon turquoise. Both fade out in the shadows and as a colour approaches
    full saturation, where pushing further only breaks gradients.
 
 Every stage is monotonic and smooth, so gradients through the LUT stay clean.
+
+## Tonal range
+
+The display rendering is deliberately relaxed. It holds a constant 0.125 code
+values per stop from about one stop under mid grey up to +3.5, so midtones map
+evenly instead of being thrown at the ends of the range, and only then rolls
+off — a power-law toe below, and a shoulder that decelerates all the way to
+white at +5.6 stops.
+
+For reference, a plain gamma 2.4 encode gives 0.144 code per stop at mid grey,
+so these profiles sit slightly gentler than that, with far more room at both
+ends. Mid grey lands on code 0.420.
+
+| stops from grey | −6 | −4 | −2 | 0 | +2 | +3 | +4 | +5 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| output code | 0.033 | 0.077 | 0.184 | 0.420 | 0.683 | 0.809 | 0.923 | 0.989 |
+
+Highlights keep 0.126 and 0.114 code per stop of separation at +3 and +4, so a
+bright sand patch or a sunlit surface stays readable rather than fusing into
+white, and shadows at −4 and −6 stops sit at 0.077 and 0.033 rather than
+collapsing into black.
+
+If you want a different amount of punch, the four constants that shape the
+curve — `MIDTONE_SLOPE`, `TOE_POWER`, `SHOULDER_STOPS`, `WHITE_STOPS` — are at
+the top of `tools/generate_luts.py`, and each profile carries its own
+`contrast` value. Raising `MIDTONE_SLOPE` toward 0.15 gives a punchier,
+more contrasted render; lowering it toward 0.11 gives a flatter one with even
+more latitude to grade into.
 
 ## Which log?
 
@@ -116,7 +145,7 @@ Medium  mean |error|  4.2/255  max 21.2/255   (uncorrected: mean 22.0, max 49.8)
 Strong  mean |error|  6.3/255  max 36.2/255   (uncorrected: mean 36.6, max 89.8)
 ```
 
-Grey patches come back within 3/255 of neutral on all three. The residual sits
+Grey patches come back within 2/255 of neutral on all three. The residual sits
 on saturated reds, which is where deep water destroys the most information and
 where the warm saturation lift is deliberately generous. It also writes
 `docs/colorchecker.svg`, a contact sheet of recorded / corrected / reference.

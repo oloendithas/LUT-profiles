@@ -152,7 +152,7 @@ class Profile:
     veil: tuple = (0.000, 0.008, 0.020)
     shadow_knee: float = 0.010     # luminance below which WB is eased off
     shadow_floor: float = 0.32     # residual WB strength in deep shadow
-    contrast: float = 0.70         # tanh contrast parameter (0 = off)
+    contrast: float = 0.45         # tanh contrast parameter (0 = off)
     saturation: float = 1.08       # global saturation
     warm_sat: float = 1.20         # saturation on reds / oranges / yellows
     cool_sat: float = 0.88         # saturation on cyans / blues
@@ -169,7 +169,7 @@ PROFILES = [
         veil=(0.000, 0.004, 0.010),
         shadow_knee=0.008,
         shadow_floor=0.40,
-        contrast=0.45,
+        contrast=0.30,
         saturation=1.04,
         warm_sat=1.10,
         cool_sat=0.94,
@@ -183,7 +183,7 @@ PROFILES = [
         veil=(0.000, 0.008, 0.020),
         shadow_knee=0.010,
         shadow_floor=0.32,
-        contrast=0.70,
+        contrast=0.45,
         saturation=1.08,
         warm_sat=1.20,
         cool_sat=0.88,
@@ -197,7 +197,7 @@ PROFILES = [
         veil=(0.000, 0.014, 0.034),
         shadow_knee=0.014,
         shadow_floor=0.25,
-        contrast=0.95,
+        contrast=0.60,
         saturation=1.12,
         warm_sat=1.32,
         cool_sat=0.80,
@@ -246,17 +246,55 @@ def white_balance_gains(cast):
     return float(LUMA @ cast) / cast
 
 
-def aces_tonemap(x):
-    """Narkowicz ACES filmic fit, scene linear -> display linear."""
-    a, b, c, d, e = 2.51, 0.03, 2.43, 0.59, 0.14
-    return np.clip((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0)
+GREY_OUT = 0.42          # output code for 0.18 scene grey
+MIDTONE_SLOPE = 0.125    # output code gained per stop through the midtones
+TOE_POWER = 0.60         # < 1 keeps deep shadows separated instead of crushed
+SHOULDER_STOPS = 3.5     # stops over grey where the highlight roll-off starts
+WHITE_STOPS = 5.6        # stops over grey that reach full white
+OUTPUT_GAMMA = 2.4       # BT.1886 display the curve is built to be seen on
+
+# Toe joins the straight portion where the straight line would otherwise start
+# falling as fast as the light itself; below that the curve rolls off as a
+# power law so shadows keep separating all the way down to black.
+_TOE_Y = MIDTONE_SLOPE / (TOE_POWER * math.log(2.0))
+_TOE_E = (_TOE_Y - GREY_OUT) / MIDTONE_SLOPE
+_SHOULDER_E = SHOULDER_STOPS
+_SHOULDER_Y = GREY_OUT + MIDTONE_SLOPE * _SHOULDER_E
+
+# The shoulder is a cubic Hermite landing on white with zero slope. It only
+# decelerates the whole way - rather than speeding up first and then braking -
+# when its entry slope is at least 1.5x its average slope.
+assert MIDTONE_SLOPE * (WHITE_STOPS - _SHOULDER_E) >= 1.5 * (1.0 - _SHOULDER_Y)
 
 
-TONEMAP_EXPOSURE = 0.55   # puts 0.18 scene grey at ~0.42 code after gamma 2.4
-OUTPUT_GAMMA = 2.4
+def display_curve(x):
+    """Scene linear -> Rec.709 code value.
+
+    A straight line through the midtones in log exposure, with a power-law toe
+    and a cubic shoulder that lands on white with zero slope. Deliberately
+    gentler than a film-emulation S-curve: the point is to keep highlights and
+    shadows separated rather than to drive them to the ends of the range.
+    """
+    x = np.asarray(x, dtype=float)
+    safe = np.maximum(x, 1e-10)
+    e = np.log2(safe / 0.18)
+
+    straight = GREY_OUT + MIDTONE_SLOPE * e
+    toe = _TOE_Y * np.exp2((e - _TOE_E) * TOE_POWER)
+
+    span = WHITE_STOPS - _SHOULDER_E
+    head = 1.0 - _SHOULDER_Y
+    m0 = MIDTONE_SLOPE * span
+    t = np.clip((e - _SHOULDER_E) / span, 0.0, 1.0)
+    shoulder = (_SHOULDER_Y + m0 * t
+                + (3.0 * head - 2.0 * m0) * t * t
+                + (m0 - 2.0 * head) * t * t * t)
+
+    y = np.where(e <= _TOE_E, toe, np.where(e >= _SHOULDER_E, shoulder, straight))
+    return np.clip(np.where(x <= 0.0, 0.0, y), 0.0, 1.0)
 
 
-def contrast_curve(x, c, pivot=0.42):
+def contrast_curve(x, c, pivot=GREY_OUT):
     """Endpoint-preserving S-curve. c = 0 is identity, higher is punchier."""
     if c <= 0.0:
         return x
@@ -354,8 +392,7 @@ def apply_profile(code, profile: Profile, decode, cam_to_709):
     lin = lin * (1.0 + (gains - 1.0) * w[..., None])
 
     # 3. display rendering
-    disp = aces_tonemap(lin * profile.exposure * TONEMAP_EXPOSURE)
-    out = np.clip(disp, 0.0, 1.0) ** (1.0 / OUTPUT_GAMMA)
+    out = display_curve(lin * profile.exposure)
 
     # 4. contrast recovered from the scattering veil
     out = contrast_curve(out, profile.contrast)
